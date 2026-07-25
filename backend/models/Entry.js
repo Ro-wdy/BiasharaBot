@@ -8,6 +8,7 @@ const entrySchema = new mongoose.Schema({
   unit_price: { type: Number, required: true },
   total: { type: Number, required: true },
   source: { type: String, enum: ['voice', 'text', 'payhero'], required: true },
+  transcription: { type: String },
   matched: { type: Boolean, default: false },
   timestamp: { type: Date, default: Date.now }
 });

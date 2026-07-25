@@ -225,7 +225,7 @@ export default function App() {
       if (response.ok) {
         const newEntry = await response.json();
         setTextEntry('');
-        setSuccess(`Logged: "${newEntry.item}" (KSh ${newEntry.total})`);
+        setSuccess(`Logged: "${newEntry.transcription || newEntry.item}" (${newEntry.qty} x KSh ${newEntry.unit_price} = KSh ${newEntry.total.toLocaleString()})`);
         fetchEntries();
       } else {
         const errData = await response.json();
@@ -295,7 +295,7 @@ export default function App() {
 
       if (response.ok) {
         const newEntry = await response.json();
-        setSuccess(`Parsed Voice: "${newEntry.item}" (KSh ${newEntry.total})`);
+        setSuccess(`Transcribed: "${newEntry.transcription || newEntry.item}" — Logged: ${newEntry.item} (${newEntry.qty} x KSh ${newEntry.unit_price} = KSh ${newEntry.total.toLocaleString()})`);
         fetchEntries();
       } else {
         const errData = await response.json();

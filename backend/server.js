@@ -53,6 +53,7 @@ app.post('/api/entries/text', async (req, res) => {
       qty: parsed.qty,
       unit_price: parsed.unit_price,
       total: parsed.total,
+      transcription: parsed.transcription || text,
       source: 'text',
       matched: false
     });
@@ -87,6 +88,7 @@ app.post('/api/entries/voice', upload.single('audio'), async (req, res) => {
       qty: parsed.qty,
       unit_price: parsed.unit_price,
       total: parsed.total,
+      transcription: parsed.transcription || 'Spoken transaction',
       source: 'voice',
       matched: false
     });

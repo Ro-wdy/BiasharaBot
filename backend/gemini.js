@@ -15,7 +15,7 @@ export async function parseTextWithGemini(text) {
     return mockParse(text);
   }
 
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
   
   const prompt = `Analyze the following transaction entry from a shop owner. Extract structured information.
 Text: "${text}"
@@ -26,10 +26,12 @@ You must return a valid JSON object matching the schema below:
   "item": string,
   "qty": number,
   "unit_price": number,
-  "total": number
+  "total": number,
+  "transcription": string
 }
 
 Instructions:
+- "transcription" must be exactly the text input that was provided.
 - If the quantity or unit price is missing, estimate them logically based on the total. E.g. "bought sugar for 200" could be item: "sugar", qty: 1, unit_price: 200, total: 200.
 - If total is missing, calculate it as qty * unit_price.
 - The "type" must be one of: "sale" (received money for goods), "purchase" (spent money to buy inventory/stock), "expense" (spent money on bills, rent, fees, wages), "credit" (customer took goods without paying, or owes money).
@@ -59,7 +61,7 @@ export async function parseAudioWithGemini(audioBuffer, mimeType) {
     return mockParse("voice entry: sold 10 loaves at 50 each");
   }
 
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
 
   const prompt = `Analyze the accompanying audio message from a shop owner logging a transaction.
 Transcribe and extract structured information.
@@ -70,11 +72,13 @@ You must return a valid JSON object matching the schema below:
   "item": string,
   "qty": number,
   "unit_price": number,
-  "total": number
+  "total": number,
+  "transcription": string
 }
 
 Instructions:
 - The audio is a spoken phrase like "sold 10 loaves at 50 each" or "nimenunua mafuta ya 1500".
+- "transcription" must be the exact text transcribed from the audio in English or Swahili depending on what was spoken.
 - If the quantity or unit price is missing, estimate them logically based on the total.
 - If total is missing, calculate it as qty * unit_price.
 - The "type" must be one of: "sale" (received money), "purchase" (bought inventory), "expense" (general expenses/bills), "credit" (customer took on credit/owes money).
@@ -114,37 +118,39 @@ function mockParse(text) {
   const lower = text.toLowerCase();
   let type = "sale";
   let item = "Loaves / Bread";
-  let qty = 10;
-  let unit_price = 50;
-  let total = 500;
+  let qty = 1;
+  let unit_price = 100;
+  let total = 100;
 
   // Simple heuristic parser for testing offline
   if (lower.includes("buy") || lower.includes("bought") || lower.includes("nunua") || lower.includes("purchase")) {
     type = "purchase";
     item = "Flour Bags";
-    qty = 5;
-    unit_price = 400;
-    total = 2000;
   } else if (lower.includes("expense") || lower.includes("rent") || lower.includes("token") || lower.includes("fee") || lower.includes("lipa")) {
     type = "expense";
     item = "Electricity Tokens";
-    qty = 1;
-    unit_price = 300;
-    total = 300;
   } else if (lower.includes("credit") || lower.includes("kopa") || lower.includes("debt") || lower.includes("owes")) {
     type = "credit";
     item = "Credit (Mama Mboga)";
-    qty = 1;
-    unit_price = 150;
-    total = 150;
   }
 
-  // Overwrite details based on some simple regex match for text if possible
-  const numbers = text.match(/\d+/g);
+  // Parse numbers
+  const numbers = text.match(/\d+(\.\d+)?/g);
   if (numbers && numbers.length >= 2) {
-    qty = parseFloat(numbers[0]) || 1;
-    unit_price = parseFloat(numbers[1]) || 100;
-    total = qty * unit_price;
+    const val1 = parseFloat(numbers[0]) || 1;
+    const val2 = parseFloat(numbers[1]) || 100;
+    qty = val1;
+
+    // Check if text contains "at", "each", "per", "at a price of" before or after the second number
+    const hasEachOrAt = /at\s+\d+|each\s+\d+|\d+\s+each|\d+\s+at/i.test(lower);
+    if (hasEachOrAt) {
+      unit_price = val2;
+      total = qty * unit_price;
+    } else {
+      // Default: second number is the total sum, e.g. "sold 5 bags for 1000"
+      total = val2;
+      unit_price = total / qty;
+    }
   } else if (numbers && numbers.length === 1) {
     total = parseFloat(numbers[0]) || 100;
     unit_price = total;
@@ -153,11 +159,11 @@ function mockParse(text) {
 
   if (text !== "voice entry: sold 10 loaves at 50 each" && text !== "voice entry") {
     // If the user actually typed something, try to extract item name
-    const cleanedText = text.replace(/(sold|bought|buy|spent|expense|credit|at|each|for|bags|loaves|\d+)/gi, "").trim();
+    const cleanedText = text.replace(/(sold|bought|buy|spent|expense|credit|at|each|for|bags|loaves|pairs|shoes|sugar|\d+)/gi, "").trim();
     if (cleanedText.length > 2) {
       item = cleanedText;
     }
   }
 
-  return { type, item, qty, unit_price, total };
+  return { type, item, qty, unit_price, total, transcription: text };
 }
