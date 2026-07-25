@@ -81,6 +81,10 @@ app.post('/api/entries/voice', upload.single('audio'), async (req, res) => {
     const parsed = await parseAudioWithGemini(req.file.buffer, mimeType);
     console.log("[AUDIO PARSED SUCCESS]", parsed);
 
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
     const entry = new Entry({
       business_id: businessId || 'demo-shop',
       type: parsed.type,

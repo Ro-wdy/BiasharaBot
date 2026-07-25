@@ -66,7 +66,12 @@ export async function parseAudioWithGemini(audioBuffer, mimeType) {
   const prompt = `Analyze the accompanying audio message from a shop owner logging a transaction.
 Transcribe and extract structured information.
 
-You must return a valid JSON object matching the schema below:
+If the audio is silent, contains only background noise, is unintelligible, or does not clearly describe a business transaction (sale, purchase, expense, or credit), you MUST return a JSON object with an "error" field:
+{
+  "error": "Could not understand the recording. Please repeat clearly, for example: 'sold 10 loaves at 50 each' or 'spent 300 on electricity'."
+}
+
+Otherwise, return a valid JSON object matching the schema below:
 {
   "type": "sale" | "purchase" | "expense" | "credit",
   "item": string,
@@ -110,7 +115,9 @@ Instructions:
     return JSON.parse(responseText);
   } catch (error) {
     console.error("Gemini API error parsing audio:", error);
-    return mockParse("voice entry: sold 10 loaves at 50 each");
+    return {
+      error: "Could not understand the recording. Please repeat clearly, for example: 'sold 10 loaves at 50 each' or 'spent 300 on electricity'."
+    };
   }
 }
 
