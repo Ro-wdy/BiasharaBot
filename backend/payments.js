@@ -1,12 +1,12 @@
-export async function triggerSTKPush({ amount, phone, entryId, callbackUrl }) {
+export async function triggerSTKPush({ amount, phone, entryId, callbackUrl, channelId }) {
   const username = process.env.PAYHERO_API_USERNAME;
   const password = process.env.PAYHERO_API_PASSWORD;
-  const channelId = process.env.PAYHERO_CHANNEL_ID;
+  const activeChannelId = channelId || process.env.PAYHERO_CHANNEL_ID;
   const payheroUrl = process.env.PAYHERO_API_URL || "https://backend.payhero.co.ke/api/v2/payments/external";
 
-  console.log(`[PAYHERO STK] Triggering STK push for Entry #${entryId}. Amount: KSh ${amount}, Phone: ${phone}`);
+  console.log(`[PAYHERO STK] Triggering STK push for Entry #${entryId}. Amount: KSh ${amount}, Phone: ${phone}, Channel ID: ${activeChannelId}`);
 
-  if (!username || !password || !channelId || username === "mock") {
+  if (!username || !password || !activeChannelId || username === "mock") {
     console.log("[PAYHERO MOCK MODE] Simulating M-Pesa STK push success.");
     return {
       success: true,
@@ -30,7 +30,7 @@ export async function triggerSTKPush({ amount, phone, entryId, callbackUrl }) {
   const payload = {
     amount: parseFloat(amount),
     phone_number: formattedPhone,
-    channel_id: parseInt(channelId),
+    channel_id: parseInt(activeChannelId),
     provider: "m-pesa",
     external_reference: String(entryId),
     callback_url: callbackUrl

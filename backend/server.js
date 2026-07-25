@@ -125,6 +125,10 @@ app.post('/api/payments/stk-push', async (req, res) => {
       return res.status(404).json({ error: "Ledger entry not found" });
     }
 
+    // Get the business to extract its PayHero Till Number/Channel ID
+    const biz = await Business.findOne({ id: entry.business_id });
+    const channelId = biz ? biz.tillNumber : null;
+
     // Formulate a callback URL (usually public-facing host + route)
     // For local testing, the simulator is used; for live payments, we pass the server's endpoint
     const host = req.get('host');
@@ -135,7 +139,8 @@ app.post('/api/payments/stk-push', async (req, res) => {
       amount: entry.total,
       phone,
       entryId: entry._id.toString(),
-      callbackUrl
+      callbackUrl,
+      channelId
     });
 
     if (result.success) {
@@ -310,24 +315,16 @@ app.get('/api/reports/weekly', async (req, res) => {
 app.post('/api/admin/verify', async (req, res) => {
   try {
     const { password, businessId } = req.body;
-    
-    let match = false;
-    if (businessId) {
-      const biz = await Business.findOne({ id: businessId });
-      if (!biz) {
-        return res.status(404).json({ error: "Business profile not found" });
-      }
-      match = await bcrypt.compare(password, biz.password);
-    } else {
-      // Legacy fallback
-      const correctPassword = process.env.ADMIN_PASSWORD || 'admin123';
-      if (correctPassword.startsWith('$2a$') || correctPassword.startsWith('$2b$')) {
-        match = await bcrypt.compare(password, correctPassword);
-      } else {
-        match = (password === correctPassword);
-      }
+    if (!businessId) {
+      return res.status(400).json({ error: "Business ID is required for verification" });
     }
-
+    
+    const biz = await Business.findOne({ id: businessId });
+    if (!biz) {
+      return res.status(404).json({ error: "Business profile not found" });
+    }
+    
+    const match = await bcrypt.compare(password, biz.password);
     if (match) {
       return res.json({ success: true });
     } else {
@@ -342,7 +339,7 @@ app.post('/api/admin/verify', async (req, res) => {
 // 8. Sign Up Business Endpoint
 app.post('/api/business', async (req, res) => {
   try {
-    const { name, phone, email, password, confirmPassword } = req.body;
+    const { name, phone, email, password, confirmPassword, tillNumber } = req.body;
     if (!name || !phone || !email || !password || !confirmPassword) {
       return res.status(400).json({ error: "All fields are required" });
     }
@@ -364,7 +361,8 @@ app.post('/api/business', async (req, res) => {
       name,
       phone,
       email,
-      password: hashedPassword
+      password: hashedPassword,
+      tillNumber: tillNumber || process.env.PAYHERO_CHANNEL_ID || '6669'
     });
 
     await business.save();
@@ -374,7 +372,8 @@ app.post('/api/business', async (req, res) => {
       id: business.id,
       name: business.name,
       phone: business.phone,
-      email: business.email
+      email: business.email,
+      tillNumber: business.tillNumber
     };
     
     res.status(201).json(responseBiz);
@@ -402,4 +401,6 @@ app.get('/api/business/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`BiasharaGPT Server running on http://localhost:${PORT}`);
 });
+// Nodemon trigger change
+
 
