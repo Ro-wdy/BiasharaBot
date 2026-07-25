@@ -244,6 +244,21 @@ app.post('/api/webhooks/payhero', async (req, res) => {
 });
 
 // 6. Weekly Report Endpoint & SMS Trigger
+function buildReportMessage({ title, businessName, revenue, cost_of_goods, other_expenses, mpesa_fees, net_profit, outstanding_credit }) {
+  return `${title}\n` +
+    `Shop: ${businessName}\n` +
+    `---------------------\n` +
+    `Revenue: KSh ${revenue.toFixed(2)}\n` +
+    `Cost of Goods: KSh ${cost_of_goods.toFixed(2)}\n` +
+    `Other Expenses: KSh ${other_expenses.toFixed(2)}\n` +
+    `M-Pesa Fees: KSh ${mpesa_fees.toFixed(2)}\n` +
+    `---------------------\n` +
+    `Net Profit: KSh ${net_profit.toFixed(2)}\n` +
+    `Outstanding Credit: KSh ${outstanding_credit.toFixed(2)}\n` +
+    `---------------------\n` +
+    `Powered by BiasharaGPT!`;
+}
+
 app.get('/api/reports/weekly', async (req, res) => {
   try {
     const { businessId, phone, businessName } = req.query;
@@ -290,18 +305,16 @@ app.get('/api/reports/weekly', async (req, res) => {
     // Trigger Outbound SMS if phone number is provided
     let smsStatus = null;
     if (phone) {
-      const smsMessage = `BiasharaGPT Weekly Report\n` +
-        `Shop: ${bname}\n` +
-        `---------------------\n` +
-        `Revenue: KSh ${revenue.toFixed(2)}\n` +
-        `Cost of Goods: KSh ${cost_of_goods.toFixed(2)}\n` +
-        `Other Expenses: KSh ${other_expenses.toFixed(2)}\n` +
-        `M-Pesa Fees: KSh ${mpesa_fees.toFixed(2)}\n` +
-        `---------------------\n` +
-        `Net Profit: KSh ${net_profit.toFixed(2)}\n` +
-        `Outstanding Credit: KSh ${outstanding_credit.toFixed(2)}\n` +
-        `---------------------\n` +
-        `Powered by BiasharaGPT!`;
+      const smsMessage = buildReportMessage({
+        title: 'BiasharaGPT Weekly Report',
+        businessName: bname,
+        revenue,
+        cost_of_goods,
+        other_expenses,
+        mpesa_fees,
+        net_profit,
+        outstanding_credit
+      });
 
       smsStatus = await sendSMS({ to: phone, message: smsMessage });
     }
@@ -316,6 +329,53 @@ app.get('/api/reports/weekly', async (req, res) => {
     res.status(500).json({ error: "Failed to generate weekly report", details: error.message });
   }
 });
+
+  // 6b. Schedule a Mock Daily Report SMS for 60 seconds later
+  app.post('/api/reports/daily/schedule-test', async (req, res) => {
+    try {
+      const { phone = '0743177132', businessName = 'My Duka' } = req.body || {};
+
+      const mockReport = {
+        revenue: 12500,
+        cost_of_goods: 7300,
+        other_expenses: 1200,
+        mpesa_fees: 50,
+        net_profit: 3950,
+        outstanding_credit: 800
+      };
+
+      const message = buildReportMessage({
+        title: 'BiasharaGPT Daily Report',
+        businessName,
+        ...mockReport
+      });
+
+      const jobId = `daily_report_${Date.now()}`;
+      const delayMs = 60_000;
+
+      setTimeout(async () => {
+        try {
+          console.log(`[SCHEDULED SMS] Sending job ${jobId} to ${phone}`);
+          const result = await sendSMS({ to: phone, message });
+          console.log(`[SCHEDULED SMS] Job ${jobId} completed:`, result);
+        } catch (error) {
+          console.error(`[SCHEDULED SMS] Job ${jobId} failed:`, error);
+        }
+      }, delayMs);
+
+      res.json({
+        success: true,
+        scheduled: true,
+        jobId,
+        sendInSeconds: 60,
+        phone,
+        messagePreview: message
+      });
+    } catch (error) {
+      console.error('Daily schedule test endpoint error:', error);
+      res.status(500).json({ error: 'Failed to schedule daily report SMS', details: error.message });
+    }
+  });
 
 // 7. Verify Admin Password Endpoint
 app.post('/api/admin/verify', async (req, res) => {

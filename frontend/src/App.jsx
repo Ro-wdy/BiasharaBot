@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = 'https://biasharagpt.onrender.com/api';
 
 // SVG Icons
 const MicIcon = () => (

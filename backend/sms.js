@@ -1,6 +1,6 @@
 export async function sendSMS({ to, message }) {
   const apiKey = process.env.TIARA_API_KEY;
-  const senderId = process.env.TIARA_SENDER_ID || "TIARACONECT";
+  const senderId = process.env.TIARA_SENDER_ID || "CONNECT";
 
   console.log(`[SMS OUTBOUND] Recipient: ${to}`);
   console.log(`[SMS OUTBOUND] Message:\n${message}\n`);
@@ -18,7 +18,7 @@ export async function sendSMS({ to, message }) {
     formattedTo = "254" + formattedTo;
   }
 
-  const smsUrl = "https://api.tiaraconnect.io/api/messaging/sendsms";
+  const smsUrl = "https://api2.tiaraconnect.io/api/messaging/sendsms";
   const smsHeaders = {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${apiKey}`
