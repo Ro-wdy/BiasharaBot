@@ -468,7 +468,7 @@ export default function App() {
             </div>
 
             <div className="form-group">
-              <label>Mobile Number (For M-Pesa STK & SMS weekly reports)</label>
+              <label>Mobile Number (For SMS weekly reports)</label>
               <input
                 type="text"
                 className="form-input"
