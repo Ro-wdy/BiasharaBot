@@ -118,7 +118,7 @@ export default function App() {
     setSmsStatus(null);
     try {
       const response = await fetch(
-        `${API_BASE}/reports/weekly?businessId=${business.id}&phone=${business.phone}&businessName=${encodeURIComponent(
+        `${API_BASE}/reports/hourly?businessId=${business.id}&phone=${business.phone}&businessName=${encodeURIComponent(
           business.name
         )}`
       );
@@ -126,13 +126,13 @@ export default function App() {
         const data = await response.json();
         setReport(data.report);
         if (data.smsStatus && data.smsStatus.success) {
-          setSmsStatus({ success: true, message: `Weekly report SMS sent automatically to ${business.phone}!` });
+          setSmsStatus({ success: true, message: `Hourly report SMS sent automatically to ${business.phone}!` });
         } else {
           setSmsStatus({ success: false, error: 'SMS notification scheduled but service is offline' });
         }
       }
     } catch (err) {
-      console.error('Error fetching weekly report:', err);
+      console.error('Error fetching hourly report:', err);
       setError('Failed to calculate report metrics.');
     } finally {
       setReportLoading(false);
