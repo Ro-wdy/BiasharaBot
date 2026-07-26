@@ -39,10 +39,10 @@ export async function sendSMS({ to, message }) {
     });
 
     const data = await response.json();
-    console.log("[SMS TIARA RESPONSE]", data);
+    console.log("[SMS TIARA RESPONSE]", JSON.stringify(data, null, 2));
 
     if (response.ok) {
-      return { success: true, data };
+      return { success: true, data, refId };
     } else {
       console.error("[SMS TIARA ERROR] Status:", response.status, data);
       return { success: false, error: data };
@@ -50,5 +50,27 @@ export async function sendSMS({ to, message }) {
   } catch (error) {
     console.error("[SMS TIARA REQUEST EXCEPTION]", error);
     return { success: false, error: error.message };
+  }
+}
+
+// Check remaining Tiara Connect balance before sending, to fail fast
+// instead of silently losing credit on a doomed send.
+export async function checkBalance() {
+  const apiKey = process.env.TIARA_API_KEY;
+  const balanceUrl = "https://api2.tiaraconnect.io/api/messaging/checkbalance";
+
+  try {
+    const response = await fetch(balanceUrl, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`
+      }
+    });
+    const data = await response.json();
+    console.log("[TIARA BALANCE]", JSON.stringify(data, null, 2));
+    return data;
+  } catch (error) {
+    console.error("[TIARA BALANCE CHECK EXCEPTION]", error);
+    return null;
   }
 }
