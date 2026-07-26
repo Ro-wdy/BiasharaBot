@@ -74,7 +74,6 @@ app.post('/api/entries/voice', upload.single('audio'), async (req, res) => {
       return res.status(400).json({ error: "Audio file is required" });
     }
 
-    // Pass the buffer and mimetype directly to Gemini
     const mimeType = req.file.mimetype || 'audio/webm';
     console.log(`[VOICE UPLOADED] File size: ${req.file.size} bytes, Mime: ${mimeType}`);
 
@@ -131,12 +130,9 @@ app.post('/api/payments/stk-push', async (req, res) => {
       return res.status(404).json({ error: "Ledger entry not found" });
     }
 
-    // Get the business to extract its PayHero Till Number/Channel ID
     const biz = await Business.findOne({ id: entry.business_id });
     const channelId = biz ? biz.tillNumber : null;
 
-    // Formulate a callback URL (usually public-facing host + route)
-    // For local testing, the simulator is used; for live payments, we pass the server's endpoint
     const host = req.get('host');
     const protocol = req.secure ? 'https' : 'http';
     const callbackUrl = `${protocol}://${host}/api/webhooks/payhero`;
@@ -166,7 +162,6 @@ app.post('/api/webhooks/payhero', async (req, res) => {
     console.log("[PAYHERO WEBHOOK RECEIVED] Payload:", req.body);
 
     const payload = req.body;
-    // Extract properties, handling common alternative naming conventions
     const status = payload.status || (payload.ResultCode === 0 ? 'success' : 'failed');
     const amount = parseFloat(payload.amount || payload.Amount || 0);
     const externalRef = payload.external_reference || payload.merchant_transaction_id || payload.CheckoutRequestID;
@@ -180,7 +175,6 @@ app.post('/api/webhooks/payhero', async (req, res) => {
 
     let matchedEntry = null;
 
-    // 1. Try to match using external reference ID if it is a valid ObjectId
     if (externalRef && mongoose.Types.ObjectId.isValid(externalRef)) {
       matchedEntry = await Entry.findById(externalRef);
       if (matchedEntry) {
@@ -190,7 +184,6 @@ app.post('/api/webhooks/payhero', async (req, res) => {
       }
     }
 
-    // 2. If no match by ID, search by amount (oldest unmatched sale)
     if (!matchedEntry && amount > 0) {
       matchedEntry = await Entry.findOne({
         type: 'sale',
@@ -204,7 +197,6 @@ app.post('/api/webhooks/payhero', async (req, res) => {
         matchedEntry.matched = true;
         await matchedEntry.save();
       } else {
-        // 3. No match found, record a new spontaneous sale entry
         console.log(`[RECONCILIATION] Unmatched payment of KSh ${amount}. Creating new entry.`);
         matchedEntry = new Entry({
           business_id: 'demo-shop',
@@ -220,7 +212,6 @@ app.post('/api/webhooks/payhero', async (req, res) => {
       }
     }
 
-    // Record the M-Pesa Transaction Fee/Service Charge as an expense
     if (serviceCharge > 0) {
       console.log(`[RECONCILIATION] Recording M-Pesa service charge: KSh ${serviceCharge}`);
       const feeEntry = new Entry({
@@ -241,6 +232,26 @@ app.post('/api/webhooks/payhero', async (req, res) => {
     console.error("Webhook endpoint error:", error);
     res.status(500).json({ error: "Webhook processing failed", details: error.message });
   }
+});
+
+// 5b. Tiara Connect DELIVERY_REPORT Webhook
+// Register in Tiara dashboard as callback type: DELIVERY_REPORT
+// URL: https://biasharagpt.onrender.com/api/webhooks/tiara-delivery
+app.post('/api/webhooks/tiara-delivery', (req, res) => {
+  console.log("[TIARA DELIVERY_REPORT]", JSON.stringify(req.body, null, 2));
+  // Once you see the real payload shape here, match req.body.refId
+  // against the refId returned by sendSMS() to track per-message status.
+  res.status(200).json({ received: true });
+});
+
+// 5c. Tiara Connect MO (Mobile Originated) Webhook
+// Register in Tiara dashboard as callback type: MO
+// URL: https://biasharagpt.onrender.com/api/webhooks/tiara-mo
+app.post('/api/webhooks/tiara-mo', (req, res) => {
+  console.log("[TIARA MO]", JSON.stringify(req.body, null, 2));
+  // TODO: extract sender phone + message text, route through
+  // parseTextWithGemini() to log as a ledger entry from SMS.
+  res.status(200).json({ received: true });
 });
 
 // 6. Weekly Report Endpoint & SMS Trigger
@@ -267,10 +278,8 @@ app.get('/api/reports/weekly', async (req, res) => {
 
     console.log(`[WEEKLY REPORT] Generating report for Business: ${bname} (${bid})`);
 
-    // Fetch all entries for this business
     const entries = await Entry.find({ business_id: bid });
 
-    // Compute Metrics
     const revenue = entries
       .filter(e => e.type === 'sale')
       .reduce((sum, e) => sum + e.total, 0);
@@ -302,7 +311,6 @@ app.get('/api/reports/weekly', async (req, res) => {
       outstanding_credit
     };
 
-    // Trigger Outbound SMS if phone number is provided
     let smsStatus = null;
     if (phone) {
       const smsMessage = buildReportMessage({
@@ -330,52 +338,52 @@ app.get('/api/reports/weekly', async (req, res) => {
   }
 });
 
-  // 6b. Schedule a Mock Daily Report SMS for 60 seconds later
-  app.post('/api/reports/daily/schedule-test', async (req, res) => {
-    try {
-      const { phone = '0743177132', businessName = 'My Duka' } = req.body || {};
+// 6b. Schedule a Mock Daily Report SMS for 60 seconds later
+app.post('/api/reports/daily/schedule-test', async (req, res) => {
+  try {
+    const { phone = '0743177132', businessName = 'My Duka' } = req.body || {};
 
-      const mockReport = {
-        revenue: 12500,
-        cost_of_goods: 7300,
-        other_expenses: 1200,
-        mpesa_fees: 50,
-        net_profit: 3950,
-        outstanding_credit: 800
-      };
+    const mockReport = {
+      revenue: 12500,
+      cost_of_goods: 7300,
+      other_expenses: 1200,
+      mpesa_fees: 50,
+      net_profit: 3950,
+      outstanding_credit: 800
+    };
 
-      const message = buildReportMessage({
-        title: 'BiasharaGPT Daily Report',
-        businessName,
-        ...mockReport
-      });
+    const message = buildReportMessage({
+      title: 'BiasharaGPT Daily Report',
+      businessName,
+      ...mockReport
+    });
 
-      const jobId = `daily_report_${Date.now()}`;
-      const delayMs = 60_000;
+    const jobId = `daily_report_${Date.now()}`;
+    const delayMs = 60_000;
 
-      setTimeout(async () => {
-        try {
-          console.log(`[SCHEDULED SMS] Sending job ${jobId} to ${phone}`);
-          const result = await sendSMS({ to: phone, message });
-          console.log(`[SCHEDULED SMS] Job ${jobId} completed:`, result);
-        } catch (error) {
-          console.error(`[SCHEDULED SMS] Job ${jobId} failed:`, error);
-        }
-      }, delayMs);
+    setTimeout(async () => {
+      try {
+        console.log(`[SCHEDULED SMS] Sending job ${jobId} to ${phone}`);
+        const result = await sendSMS({ to: phone, message });
+        console.log(`[SCHEDULED SMS] Job ${jobId} completed:`, result);
+      } catch (error) {
+        console.error(`[SCHEDULED SMS] Job ${jobId} failed:`, error);
+      }
+    }, delayMs);
 
-      res.json({
-        success: true,
-        scheduled: true,
-        jobId,
-        sendInSeconds: 60,
-        phone,
-        messagePreview: message
-      });
-    } catch (error) {
-      console.error('Daily schedule test endpoint error:', error);
-      res.status(500).json({ error: 'Failed to schedule daily report SMS', details: error.message });
-    }
-  });
+    res.json({
+      success: true,
+      scheduled: true,
+      jobId,
+      sendInSeconds: 60,
+      phone,
+      messagePreview: message
+    });
+  } catch (error) {
+    console.error('Daily schedule test endpoint error:', error);
+    res.status(500).json({ error: 'Failed to schedule daily report SMS', details: error.message });
+  }
+});
 
 // 7. Verify Admin Password Endpoint
 app.post('/api/admin/verify', async (req, res) => {
@@ -384,12 +392,12 @@ app.post('/api/admin/verify', async (req, res) => {
     if (!businessId) {
       return res.status(400).json({ error: "Business ID is required for verification" });
     }
-    
+
     const biz = await Business.findOne({ id: businessId });
     if (!biz) {
       return res.status(404).json({ error: "Business profile not found" });
     }
-    
+
     const match = await bcrypt.compare(password, biz.password);
     if (match) {
       return res.json({ success: true });
@@ -433,7 +441,7 @@ app.post('/api/business', async (req, res) => {
 
     await business.save();
     console.log(`[BUSINESS REGISTERED] ID: ${id}, Name: ${name}, Email: ${email}`);
-    
+
     const responseBiz = {
       id: business.id,
       name: business.name,
@@ -441,7 +449,7 @@ app.post('/api/business', async (req, res) => {
       email: business.email,
       tillNumber: business.tillNumber
     };
-    
+
     res.status(201).json(responseBiz);
   } catch (error) {
     console.error("Business signup error:", error);
@@ -468,5 +476,3 @@ app.listen(PORT, () => {
   console.log(`BiasharaGPT Server running on http://localhost:${PORT}`);
 });
 // Nodemon trigger change
-
-
