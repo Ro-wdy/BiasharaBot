@@ -46,6 +46,13 @@ app.post('/api/entries/text', async (req, res) => {
     const parsed = await parseTextWithGemini(text);
     console.log("[TEXT PARSED SUCCESS]", parsed);
 
+    // Guard: reject entries Gemini couldn't assign a valid amount to,
+    // so bad data never reaches the DB and poisons report totals.
+    if (parsed.total === undefined || parsed.total === null || isNaN(Number(parsed.total))) {
+      console.warn("[BAD PARSE] Gemini returned no valid total (text):", parsed);
+      return res.status(422).json({ error: "Could not determine an amount for that entry", parsed });
+    }
+
     const entry = new Entry({
       business_id: businessId || 'demo-shop',
       type: parsed.type,
@@ -82,6 +89,13 @@ app.post('/api/entries/voice', upload.single('audio'), async (req, res) => {
 
     if (parsed.error) {
       return res.status(400).json({ error: parsed.error });
+    }
+
+    // Guard: reject entries Gemini couldn't assign a valid amount to,
+    // so bad data never reaches the DB and poisons report totals.
+    if (parsed.total === undefined || parsed.total === null || isNaN(Number(parsed.total))) {
+      console.warn("[BAD PARSE] Gemini returned no valid total (voice):", parsed);
+      return res.status(422).json({ error: "Could not determine an amount for that entry", parsed });
     }
 
     const entry = new Entry({
@@ -280,25 +294,29 @@ app.get('/api/reports/weekly', async (req, res) => {
 
     const entries = await Entry.find({ business_id: bid });
 
+    // Fix: coerce every total to a number with a 0 fallback. A single
+    // entry with a missing/undefined total previously turned these sums
+    // into NaN, which JSON.stringify silently converts to null — that
+    // null then crashed the frontend's .toFixed() calls.
     const revenue = entries
       .filter(e => e.type === 'sale')
-      .reduce((sum, e) => sum + e.total, 0);
+      .reduce((sum, e) => sum + (Number(e.total) || 0), 0);
 
     const cost_of_goods = entries
       .filter(e => e.type === 'purchase')
-      .reduce((sum, e) => sum + e.total, 0);
+      .reduce((sum, e) => sum + (Number(e.total) || 0), 0);
 
     const other_expenses = entries
       .filter(e => e.type === 'expense' && e.source !== 'payhero')
-      .reduce((sum, e) => sum + e.total, 0);
+      .reduce((sum, e) => sum + (Number(e.total) || 0), 0);
 
     const mpesa_fees = entries
       .filter(e => e.type === 'expense' && e.source === 'payhero')
-      .reduce((sum, e) => sum + e.total, 0);
+      .reduce((sum, e) => sum + (Number(e.total) || 0), 0);
 
     const outstanding_credit = entries
       .filter(e => e.type === 'credit' && !e.matched)
-      .reduce((sum, e) => sum + e.total, 0);
+      .reduce((sum, e) => sum + (Number(e.total) || 0), 0);
 
     const net_profit = revenue - cost_of_goods - other_expenses - mpesa_fees;
 
