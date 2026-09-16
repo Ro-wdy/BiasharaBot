@@ -623,13 +623,13 @@ export default function App() {
       <div className="app-container">
         <header>
           <h1>BiasharaGPT</h1>
-          <p>Kenyan shop assistant powered by Gemini AI & M-Pesa</p>
+          <p>Kenyan's Number one shop assistant</p>
         </header>
         <div className="content">
           <InstallPrompt />
           <form className="setup-card" onSubmit={handleSetupSubmit}>
             <h2>Business Sign Up</h2>
-            <p>Register your duka or market stall to sync transactions with MongoDB Atlas.</p>
+            <p>Register your duka or shop</p>
 
             {!online && (
               <div className="error-message">

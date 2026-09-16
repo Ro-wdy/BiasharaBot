@@ -60,7 +60,17 @@ Registering a business, unlocking the Admin Ledger (bcrypt check is server-side)
 and sending an STK push all require a live connection, and the UI says so rather
 than queueing something that cannot work later.
 
-## Hosting requirements
+## Hosting
+
+Deployed on Vercel at https://biashara-gpt.vercel.app — the Vercel project's
+Root Directory is this `frontend/` folder, which is where [vercel.json](vercel.json)
+has to live. That config does three things: falls unknown paths back to
+`index.html`, caches the content-hashed `assets/` immutably (Vercel's default
+revalidates the JS and CSS on every launch, which costs data on a slow
+connection), and keeps `sw.js` uncacheable so a deploy can actually reach
+phones that already have the app installed.
+
+### Requirements on any host
 
 - **HTTPS** (or localhost). Service workers do not run otherwise.
 - Serve `sw.js` from the **site root** so its scope covers the whole app, and
