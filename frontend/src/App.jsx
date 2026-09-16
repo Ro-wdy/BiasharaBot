@@ -1,6 +1,29 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { API_BASE, isNetworkError, isOffline } from './lib/api.js';
+import { readSnapshot, saveSnapshot } from './lib/idb.js';
+import {
+  discardOutboxItem,
+  enqueueTextEntry,
+  enqueueVoiceEntry,
+  retryOutboxItem,
+} from './lib/outbox.js';
+import { formatKsh, timeAgo } from './lib/format.js';
+import { useOfflineSync } from './hooks/useOfflineSync.js';
+import ConnectionBar from './components/ConnectionBar.jsx';
+import PendingEntries from './components/PendingEntries.jsx';
+import InstallPrompt from './components/InstallPrompt.jsx';
+import UpdateBanner from './components/UpdateBanner.jsx';
 
-const API_BASE = 'https://biasharagpt.onrender.com/api';
+// The service worker replays the last good API response when the network is
+// gone, and stamps it so the UI can say "this is a saved copy" instead of
+// passing stale figures off as live ones.
+const servedFromCache = (response) => response.headers.get('X-Biashara-From-Cache') === '1';
+
+// Home-screen shortcuts in the manifest deep-link with ?tab=...
+const initialTab = () => {
+  const tab = new URLSearchParams(window.location.search).get('tab');
+  return ['ledger', 'report', 'admin'].includes(tab) ? tab : 'ledger';
+};
 
 // SVG Icons
 const MicIcon = () => (
@@ -56,8 +79,12 @@ export default function App() {
   const [setupConfirmPassword, setSetupConfirmPassword] = useState('');
 
   // Main UI State
-  const [activeTab, setActiveTab] = useState('ledger'); // 'ledger' (Dashboard), 'report' (Till slip), 'admin' (Admin Ledger)
+  const [activeTab, setActiveTab] = useState(initialTab); // 'ledger' (Dashboard), 'report' (Till slip), 'admin' (Admin Ledger)
   const [entries, setEntries] = useState([]);
+  // Set when the ledger/report on screen came from the offline snapshot
+  // instead of the server, so the UI can say how stale it is.
+  const [entriesSavedAt, setEntriesSavedAt] = useState(null);
+  const [reportSavedAt, setReportSavedAt] = useState(null);
   const [textEntry, setTextEntry] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -78,6 +105,9 @@ export default function App() {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const timerRef = useRef(null);
+  // Duration also lives in a ref: MediaRecorder's onstop closure would
+  // otherwise read the value from the render that started the recording.
+  const durationRef = useRef(0);
 
   // STK Push Modal State
   const [showStkModal, setShowStkModal] = useState(false);
@@ -97,23 +127,39 @@ export default function App() {
   const [simEntryId, setSimEntryId] = useState('');
   const [simLoading, setSimLoading] = useState(false);
 
-  // Fetch entries
+  // Fetch entries, falling back to the last snapshot saved on this device so
+  // the ledger still opens in a dead spot.
   const fetchEntries = async () => {
     if (!business) return;
+    const cacheKey = `entries:${business.id}`;
     try {
       const response = await fetch(`${API_BASE}/entries?businessId=${business.id}`);
-      if (response.ok) {
-        const data = await response.json();
-        setEntries(data);
+      if (!response.ok) throw new Error(`Ledger request failed (${response.status})`);
+
+      const data = await response.json();
+      setEntries(data);
+
+      if (servedFromCache(response)) {
+        const snapshot = await readSnapshot(cacheKey);
+        setEntriesSavedAt(snapshot?.savedAt || response.headers.get('date') || null);
+      } else {
+        setEntriesSavedAt(null);
+        saveSnapshot(cacheKey, data);
       }
     } catch (err) {
-      console.error('Error fetching ledger entries:', err);
+      console.warn('Serving ledger from offline snapshot:', err);
+      const snapshot = await readSnapshot(cacheKey);
+      if (snapshot) {
+        setEntries(snapshot.data);
+        setEntriesSavedAt(snapshot.savedAt);
+      }
     }
   };
 
   // Fetch weekly report + trigger SMS automatically on load
   const fetchReportAndSendSMS = async () => {
     if (!business) return;
+    const cacheKey = `report:${business.id}`;
     setReportLoading(true);
     setSmsStatus(null);
     try {
@@ -122,22 +168,61 @@ export default function App() {
           business.name
         )}`
       );
-      if (response.ok) {
-        const data = await response.json();
-        setReport(data.report);
-        if (data.smsStatus && data.smsStatus.success) {
-          setSmsStatus({ success: true, message: `Weekly report SMS sent automatically to ${business.phone}!` });
-        } else {
-          setSmsStatus({ success: false, error: 'SMS notification scheduled but service is offline' });
-        }
+      if (!response.ok) throw new Error(`Report request failed (${response.status})`);
+
+      const data = await response.json();
+      setReport(data.report);
+
+      if (servedFromCache(response)) {
+        // A replayed response means no SMS went out just now — saying it did
+        // would be a lie the owner might act on.
+        const snapshot = await readSnapshot(cacheKey);
+        setReportSavedAt(snapshot?.savedAt || response.headers.get('date') || null);
+        setSmsStatus(null);
+        return;
+      }
+
+      setReportSavedAt(null);
+      saveSnapshot(cacheKey, data.report);
+      if (data.smsStatus && data.smsStatus.success) {
+        setSmsStatus({ success: true, message: `Weekly report SMS sent automatically to ${business.phone}!` });
+      } else {
+        setSmsStatus({ success: false, error: 'SMS notification scheduled but service is offline' });
       }
     } catch (err) {
-      console.error('Error fetching weekly report:', err);
-      setError('Failed to calculate report metrics.');
+      console.warn('Serving weekly report from offline snapshot:', err);
+      const snapshot = await readSnapshot(cacheKey);
+      if (snapshot) {
+        setReport(snapshot.data);
+        setReportSavedAt(snapshot.savedAt);
+        setSmsStatus(null);
+      } else {
+        setError('No saved till slip on this phone yet — connect once to generate it.');
+      }
     } finally {
       setReportLoading(false);
     }
   };
+
+  // Connectivity + the queue of entries captured offline. Declared after the
+  // fetchers so onSynced can refresh the ledger once uploads land.
+  const {
+    online,
+    pending,
+    failed,
+    pendingCount,
+    failedCount,
+    syncing,
+    lastSyncedAt,
+    sync,
+  } = useOfflineSync(business?.id, {
+    onSynced: (count) => {
+      setSuccess(
+        `${count} offline ${count === 1 ? 'entry' : 'entries'} uploaded and reconciled.`
+      );
+      fetchEntries();
+    },
+  });
 
   // Trigger data load on mount or business change
   useEffect(() => {
@@ -203,6 +288,31 @@ export default function App() {
     }
   };
 
+  // Saves a transaction on the phone when the server is out of reach. Nothing
+  // is ever lost to a dead spot; the outbox uploads it later.
+  const queueTextEntry = async (text) => {
+    const item = await enqueueTextEntry({ businessId: business.id, text });
+    setTextEntry('');
+    setSuccess(
+      item.provisional
+        ? `Saved on this phone: ${item.provisional.item} ≈ ${formatKsh(item.provisional.total)}. It will sync when you have network.`
+        : 'Saved on this phone. It will sync and be priced when you have network.'
+    );
+    return item;
+  };
+
+  const queueVoiceEntry = async (audioBlob, durationSec) => {
+    await enqueueVoiceEntry({
+      businessId: business.id,
+      audio: audioBlob,
+      mimeType: audioBlob.type,
+      durationSec,
+    });
+    setSuccess(
+      'Voice note saved on this phone. It will be transcribed and logged as soon as you have network.'
+    );
+  };
+
   // Handle Text Logging
   const handleTextSubmit = async (e) => {
     e.preventDefault();
@@ -211,6 +321,17 @@ export default function App() {
     setLoading(true);
     setError(null);
     setSuccess(null);
+
+    if (isOffline()) {
+      try {
+        await queueTextEntry(textEntry);
+      } catch (err) {
+        setError('Could not save this entry on the phone');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
 
     try {
       const response = await fetch(`${API_BASE}/entries/text`, {
@@ -227,12 +348,19 @@ export default function App() {
         setTextEntry('');
         setSuccess(`Logged: "${newEntry.transcription || newEntry.item}" (${newEntry.qty} x KSh ${newEntry.unit_price} = KSh ${newEntry.total.toLocaleString()})`);
         fetchEntries();
+      } else if (response.status >= 500) {
+        // Server reachable but broken — queue rather than lose the sale.
+        await queueTextEntry(textEntry);
       } else {
         const errData = await response.json();
         setError(errData.error || 'Failed to parse text transaction');
       }
     } catch (err) {
-      setError('Connection to backend failed');
+      if (isNetworkError(err)) {
+        await queueTextEntry(textEntry);
+      } else {
+        setError('Connection to backend failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -255,17 +383,22 @@ export default function App() {
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        await uploadAudio(audioBlob);
+        // MediaRecorder picks its own container; keep it so the backend gets a
+        // mime type Gemini can actually read (Safari records mp4, not webm).
+        const recordedType = mediaRecorder.mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: recordedType });
+        await uploadAudio(audioBlob, durationRef.current);
         stream.getTracks().forEach((track) => track.stop());
       };
 
       mediaRecorder.start();
       setIsRecording(true);
       setRecordingDuration(0);
+      durationRef.current = 0;
 
       timerRef.current = setInterval(() => {
-        setRecordingDuration((prev) => prev + 1);
+        durationRef.current += 1;
+        setRecordingDuration(durationRef.current);
       }, 1000);
     } catch (err) {
       setError('Microphone access denied or not supported.');
@@ -281,8 +414,22 @@ export default function App() {
     }
   };
 
-  const uploadAudio = async (audioBlob) => {
+  const uploadAudio = async (audioBlob, durationSec = 0) => {
     setLoading(true);
+
+    // Offline: keep the recording itself. Transcription needs the server, so
+    // the note is queued as audio and parsed when it uploads.
+    if (isOffline()) {
+      try {
+        await queueVoiceEntry(audioBlob, durationSec);
+      } catch (err) {
+        setError('Could not save this voice note on the phone');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     try {
       const formData = new FormData();
       formData.append('audio', audioBlob, 'voice_note.webm');
@@ -297,12 +444,18 @@ export default function App() {
         const newEntry = await response.json();
         setSuccess(`Transcribed: "${newEntry.transcription || newEntry.item}" — Logged: ${newEntry.item} (${newEntry.qty} x KSh ${newEntry.unit_price} = KSh ${newEntry.total.toLocaleString()})`);
         fetchEntries();
+      } else if (response.status >= 500) {
+        await queueVoiceEntry(audioBlob, durationSec);
       } else {
         const errData = await response.json();
         setError(errData.error || 'Failed to parse voice entry');
       }
     } catch (err) {
-      setError('Connection to voice API failed');
+      if (isNetworkError(err)) {
+        await queueVoiceEntry(audioBlob, durationSec);
+      } else {
+        setError('Connection to voice API failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -312,6 +465,12 @@ export default function App() {
   const handleAdminVerify = async (e) => {
     e.preventDefault();
     if (!adminPassword) return;
+
+    // The password is verified server-side (bcrypt), so this one needs network.
+    if (isOffline()) {
+      setAdminError('You are offline. Unlocking the admin ledger needs network.');
+      return;
+    }
 
     setAdminLoading(true);
     setAdminError(null);
@@ -354,6 +513,14 @@ export default function App() {
   const handleStkSubmit = async (e) => {
     e.preventDefault();
     if (!stkPhone.trim()) return;
+
+    // An STK push has to reach the customer's phone now; there is nothing
+    // useful to queue for later.
+    if (isOffline()) {
+      setError('STK push needs network — the customer must get the prompt right away.');
+      setShowStkModal(false);
+      return;
+    }
 
     setStkLoading(true);
     try {
@@ -430,12 +597,23 @@ export default function App() {
   todayStart.setHours(0, 0, 0, 0);
 
   const todayEntries = entries.filter((e) => new Date(e.timestamp) >= todayStart);
-  const todayRevenue = todayEntries.filter((e) => e.type === 'sale').reduce((s, e) => s + e.total, 0);
-  const todayPurchases = todayEntries.filter((e) => e.type === 'purchase').reduce((s, e) => s + e.total, 0);
-  const todayExpenses = todayEntries
-    .filter((e) => e.type === 'expense')
-    .reduce((s, e) => s + e.total, 0);
+  const sumByType = (rows, type) =>
+    rows.filter((e) => e.type === type).reduce((s, e) => s + (Number(e.total) || 0), 0);
+
+  // Entries still sitting in the outbox count towards today as well — the sale
+  // happened, it just has not reached the server. Typed entries contribute
+  // their on-device estimate; voice notes have no figure until they sync.
+  const pendingToday = pending.filter((item) => new Date(item.createdAt) >= todayStart);
+  const provisionalToday = pendingToday.map((item) => item.provisional).filter(Boolean);
+  const unpricedPendingCount = pendingToday.length - provisionalToday.length;
+
+  const todayRevenue = sumByType(todayEntries, 'sale') + sumByType(provisionalToday, 'sale');
+  const todayPurchases =
+    sumByType(todayEntries, 'purchase') + sumByType(provisionalToday, 'purchase');
+  const todayExpenses =
+    sumByType(todayEntries, 'expense') + sumByType(provisionalToday, 'expense');
   const todayNet = todayRevenue - todayPurchases - todayExpenses;
+  const totalsAreEstimates = provisionalToday.length > 0;
 
   // Unmatched entries list for webhook simulator dropdown
   const unmatchedSales = entries.filter((e) => e.type === 'sale' && !e.matched && e.source !== 'payhero');
@@ -448,9 +626,17 @@ export default function App() {
           <p>Kenyan shop assistant powered by Gemini AI & M-Pesa</p>
         </header>
         <div className="content">
+          <InstallPrompt />
           <form className="setup-card" onSubmit={handleSetupSubmit}>
             <h2>Business Sign Up</h2>
             <p>Register your duka or market stall to sync transactions with MongoDB Atlas.</p>
+
+            {!online && (
+              <div className="error-message">
+                You are offline. Signing up needs network once — after that the app records sales
+                without it.
+              </div>
+            )}
 
             {error && <div className="error-message">{error}</div>}
 
@@ -520,7 +706,7 @@ export default function App() {
               />
             </div>
 
-            <button type="submit" className="btn btn-primary" disabled={loading}>
+            <button type="submit" className="btn btn-primary" disabled={loading || !online}>
               {loading ? <div className="loading-spinner" style={{ borderColor: 'var(--color-indigo-ink)' }} /> : 'Register & Sync'}
             </button>
           </form>
@@ -556,6 +742,17 @@ export default function App() {
         </div>
       </header>
 
+      <UpdateBanner />
+
+      <ConnectionBar
+        online={online}
+        pendingCount={pendingCount}
+        failedCount={failedCount}
+        syncing={syncing}
+        lastSyncedAt={lastSyncedAt}
+        onSync={sync}
+      />
+
       <div className="nav-tabs">
         <button
           className={`nav-tab ${activeTab === 'ledger' ? 'active' : ''}`}
@@ -583,17 +780,44 @@ export default function App() {
 
         {activeTab === 'ledger' && (
           <>
+            <InstallPrompt />
+
             {/* Today's Summary Metrics */}
             <div className="metrics-grid">
               <div className="metric-card">
                 <span className="metric-label">Today's Sales</span>
-                <span className="metric-val mono">KSh {todayRevenue.toLocaleString()}</span>
+                <span className="metric-val mono">
+                  {totalsAreEstimates ? '≈ ' : ''}KSh {todayRevenue.toLocaleString()}
+                </span>
               </div>
               <div className={`metric-card ${todayNet >= 0 ? 'profit-positive' : 'profit-negative'}`}>
                 <span className="metric-label">Today's Profit</span>
-                <span className="metric-val mono">KSh {todayNet.toLocaleString()}</span>
+                <span className="metric-val mono">
+                  {totalsAreEstimates ? '≈ ' : ''}KSh {todayNet.toLocaleString()}
+                </span>
               </div>
             </div>
+
+            {(totalsAreEstimates || unpricedPendingCount > 0 || entriesSavedAt) && (
+              <div className="totals-note">
+                {totalsAreEstimates && (
+                  <span>
+                    Includes {provisionalToday.length} unsynced{' '}
+                    {provisionalToday.length === 1 ? 'entry' : 'entries'} counted from this phone.{' '}
+                  </span>
+                )}
+                {unpricedPendingCount > 0 && (
+                  <span>
+                    {unpricedPendingCount === 1
+                      ? '1 voice note is not priced yet, so it is left out until it syncs.'
+                      : `${unpricedPendingCount} voice notes are not priced yet, so they are left out until they sync.`}{' '}
+                  </span>
+                )}
+                {entriesSavedAt && (
+                  <span>Server figures are the copy saved on this phone {timeAgo(entriesSavedAt)}.</span>
+                )}
+              </div>
+            )}
 
             {/* Quick Logging Input Panel */}
             <div className="logger-card torn-divider-bottom">
@@ -601,6 +825,13 @@ export default function App() {
               <p style={{ fontSize: '13px', color: '#5A524E', marginBottom: '16px' }}>
                 Tap the microphone to speak, or type details below:
               </p>
+
+              {!online && (
+                <p className="offline-capture-note">
+                  No network right now — recordings and typed entries are saved on this phone and
+                  upload themselves later.
+                </p>
+              )}
 
               <div className="voice-recording-area">
                 <button
@@ -636,6 +867,13 @@ export default function App() {
               </form>
             </div>
             
+            <PendingEntries
+              items={pending}
+              failed={failed}
+              onRetry={retryOutboxItem}
+              onDiscard={discardOutboxItem}
+            />
+
             <div style={{ textAlign: 'center', marginTop: '30px', color: 'var(--color-gray-dark)', fontSize: '13px' }}>
               ℹ️ Transaction history and developer simulations have been relocated to the protected <strong>Admin Ledger</strong> tab.
             </div>
@@ -651,6 +889,13 @@ export default function App() {
               </div>
             ) : report ? (
               <>
+                {reportSavedAt && (
+                  <div className="offline-snapshot-note">
+                    Showing the till slip saved on this phone {timeAgo(reportSavedAt)}. It refreshes
+                    — and the SMS goes out — once you have network.
+                  </div>
+                )}
+
                 {smsStatus && (
                   <div className={smsStatus.success ? 'success-message' : 'error-message'}>
                     📢 {smsStatus.message || smsStatus.error}
@@ -800,6 +1045,21 @@ export default function App() {
                       </button>
                     </div>
                   </div>
+
+                  <PendingEntries
+                    items={pending}
+                    failed={failed}
+                    onRetry={retryOutboxItem}
+                    onDiscard={discardOutboxItem}
+                    masked={maskSensitiveData}
+                  />
+
+                  {entriesSavedAt && (
+                    <div className="offline-snapshot-note">
+                      This history is the copy saved on the phone {timeAgo(entriesSavedAt)} — it
+                      refreshes when you have network.
+                    </div>
+                  )}
 
                   {entries.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '40px 0', color: '#5A524E' }}>

@@ -8,6 +8,12 @@ import Business from './models/Business.js';
 import { parseTextWithGemini, parseAudioWithGemini } from './gemini.js';
 import { triggerSTKPush } from './payments.js';
 import { sendSMS } from './sms.js';
+import {
+  findByClientId,
+  reconcileOfflineSale,
+  resolveTimestamp,
+  saveEntryIdempotently
+} from './offline-sync.js';
 import bcrypt from 'bcryptjs';
 
 dotenv.config();
@@ -38,9 +44,15 @@ if (!mongoURI) {
 // 1. Text Entry Endpoint
 app.post('/api/entries/text', async (req, res) => {
   try {
-    const { text, businessId } = req.body;
+    const { text, businessId, clientId, occurredAt } = req.body;
     if (!text) {
       return res.status(400).json({ error: "Text entry is required" });
+    }
+
+    const alreadyStored = await findByClientId(clientId);
+    if (alreadyStored) {
+      console.log(`[IDEMPOTENT] clientId ${clientId} already logged; returning stored entry`);
+      return res.status(200).json(alreadyStored);
     }
 
     const parsed = await parseTextWithGemini(text);
@@ -62,11 +74,14 @@ app.post('/api/entries/text', async (req, res) => {
       total: parsed.total,
       transcription: parsed.transcription || text,
       source: 'text',
-      matched: false
+      matched: false,
+      client_id: clientId || undefined,
+      timestamp: resolveTimestamp(occurredAt)
     });
 
-    await entry.save();
-    res.status(201).json(entry);
+    const { entry: saved, duplicate } = await saveEntryIdempotently(entry, clientId);
+    if (!duplicate && clientId) await reconcileOfflineSale(saved);
+    res.status(duplicate ? 200 : 201).json(saved);
   } catch (error) {
     console.error("Text entry endpoint error:", error);
     res.status(500).json({ error: "Failed to process text entry", details: error.message });
@@ -76,9 +91,16 @@ app.post('/api/entries/text', async (req, res) => {
 // 2. Voice Entry Endpoint
 app.post('/api/entries/voice', upload.single('audio'), async (req, res) => {
   try {
-    const { businessId } = req.body;
+    const { businessId, clientId, occurredAt } = req.body;
     if (!req.file) {
       return res.status(400).json({ error: "Audio file is required" });
+    }
+
+    // A queued voice note may be re-uploaded; never transcribe or bill twice.
+    const alreadyStored = await findByClientId(clientId);
+    if (alreadyStored) {
+      console.log(`[IDEMPOTENT] clientId ${clientId} already logged; returning stored entry`);
+      return res.status(200).json(alreadyStored);
     }
 
     const mimeType = req.file.mimetype || 'audio/webm';
@@ -107,11 +129,14 @@ app.post('/api/entries/voice', upload.single('audio'), async (req, res) => {
       total: parsed.total,
       transcription: parsed.transcription || 'Spoken transaction',
       source: 'voice',
-      matched: false
+      matched: false,
+      client_id: clientId || undefined,
+      timestamp: resolveTimestamp(occurredAt)
     });
 
-    await entry.save();
-    res.status(201).json(entry);
+    const { entry: saved, duplicate } = await saveEntryIdempotently(entry, clientId);
+    if (!duplicate && clientId) await reconcileOfflineSale(saved);
+    res.status(duplicate ? 200 : 201).json(saved);
   } catch (error) {
     console.error("Voice entry endpoint error:", error);
     res.status(500).json({ error: "Failed to process voice entry", details: error.message });

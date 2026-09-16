@@ -758,3 +758,412 @@ header p {
   cursor: pointer;
 }
 
+
+/* ==========================================================================
+   PWA / offline-first UI
+   ========================================================================== */
+
+/* Installed on a notched phone, the app owns the whole screen: keep the header
+   and content clear of the status bar, home indicator and rounded corners. */
+@media (display-mode: standalone), (display-mode: minimal-ui) {
+  header {
+    padding-top: calc(24px + env(safe-area-inset-top));
+  }
+
+  .content {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .app-container {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+@supports (min-height: 100dvh) {
+  /* dvh tracks the collapsing mobile browser bars; 100vh overshoots there. */
+  .app-container {
+    min-height: 100dvh;
+  }
+}
+
+/* Connection + sync strip --------------------------------------------------- */
+
+.connection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--color-gray-light);
+  background-color: var(--color-white);
+}
+
+.connection-bar.tone-offline {
+  background-color: #FBEDE8;
+  border-bottom-color: var(--color-baked-clay);
+  color: var(--color-baked-clay);
+}
+
+.connection-bar.tone-pending,
+.connection-bar.tone-syncing {
+  background-color: #FDF4E4;
+  border-bottom-color: var(--color-marigold);
+  color: #8A5A11;
+}
+
+.connection-bar.tone-synced {
+  color: var(--color-sukuma-green);
+}
+
+.conn-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.conn-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.conn-icon.spinning {
+  animation: conn-spin 1.4s linear infinite;
+}
+
+@keyframes conn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conn-icon.spinning {
+    animation: none;
+  }
+}
+
+.conn-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.conn-title {
+  font-weight: 700;
+}
+
+.conn-detail {
+  font-size: 12px;
+  color: var(--color-gray-dark);
+}
+
+.conn-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.conn-badge.failed {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-baked-clay);
+  background: #FBEDE8;
+  border-radius: 12px;
+  padding: 3px 8px;
+}
+
+.conn-sync-btn {
+  background-color: var(--color-indigo-ink);
+  color: var(--color-white);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 36px;
+}
+
+.conn-sync-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Offline notes ------------------------------------------------------------- */
+
+.totals-note,
+.offline-snapshot-note,
+.offline-capture-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-gray-dark);
+}
+
+.totals-note {
+  margin: -8px 0 20px;
+}
+
+.offline-snapshot-note,
+.offline-capture-note {
+  background-color: #FDF4E4;
+  border-left: 4px solid var(--color-marigold);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  color: #8A5A11;
+}
+
+/* Waiting-to-sync queue ----------------------------------------------------- */
+
+.pending-section {
+  margin-top: 28px;
+}
+
+.pending-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.pending-header h3 {
+  font-size: 17px;
+}
+
+.pending-count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-indigo-ink);
+  background: var(--color-marigold);
+  border-radius: 12px;
+  padding: 2px 9px;
+}
+
+.pending-count.failed {
+  background: var(--color-baked-clay);
+  color: var(--color-white);
+}
+
+.pending-note {
+  font-size: 12px;
+  color: var(--color-gray-dark);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.pending-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pending-item {
+  background: var(--color-white);
+  border-radius: var(--border-radius);
+  border-left: 5px dashed var(--color-marigold);
+  box-shadow: var(--shadow-sm);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pending-item.failed {
+  border-left-style: solid;
+  border-left-color: var(--color-baked-clay);
+  margin-top: 10px;
+}
+
+.pending-item-main {
+  min-width: 0;
+}
+
+.pending-item-name {
+  display: block;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--color-charcoal);
+  overflow-wrap: anywhere;
+}
+
+.pending-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-gray-dark);
+  margin-top: 4px;
+}
+
+.pending-kind {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pending-item-amount {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.pending-item-amount .provisional {
+  font-size: 15px;
+  font-weight: 700;
+  color: #8A5A11;
+}
+
+.pending-item-amount .awaiting {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--color-gray-dark);
+}
+
+.pending-item-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.pending-item-actions button {
+  background: none;
+  border: 1px solid var(--color-indigo-ink);
+  color: var(--color-indigo-ink);
+  border-radius: 6px;
+  padding: 7px 11px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 34px;
+}
+
+.pending-item-actions button.discard {
+  border-color: var(--color-baked-clay);
+  color: var(--color-baked-clay);
+}
+
+.failed-list {
+  margin-top: 24px;
+}
+
+/* Install + update prompts -------------------------------------------------- */
+
+.install-card {
+  background: var(--color-indigo-ink);
+  color: var(--color-white);
+  border-radius: var(--border-radius);
+  padding: 16px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.install-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 200px;
+  flex: 1;
+}
+
+.install-text strong {
+  color: var(--color-marigold);
+  font-size: 15px;
+}
+
+.install-text span {
+  font-size: 12px;
+  opacity: 0.85;
+  line-height: 1.5;
+}
+
+.install-steps {
+  margin: 8px 0 0 18px;
+  font-size: 12px;
+  line-height: 1.7;
+  opacity: 0.9;
+}
+
+.install-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.install-btn {
+  width: auto;
+  padding: 10px 18px;
+  font-size: 13px;
+  margin: 0;
+}
+
+.install-dismiss {
+  background: none;
+  border: none;
+  color: var(--color-gray-medium);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 8px;
+}
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  background-color: var(--color-sukuma-green);
+  color: var(--color-white);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.update-banner button {
+  background: var(--color-white);
+  color: var(--color-sukuma-green);
+  border: none;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 34px;
+}
+
+/* Small phones: stack the strips so nothing gets clipped at 320px. */
+@media (max-width: 380px) {
+  .connection-bar,
+  .pending-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .conn-actions,
+  .pending-item-amount {
+    width: 100%;
+    text-align: left;
+  }
+
+  .install-actions {
+    width: 100%;
+  }
+
+  .install-btn {
+    flex: 1;
+  }
+}

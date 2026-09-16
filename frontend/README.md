@@ -1,16 +1,71 @@
-# React + Vite
+# BiasharaGPT frontend (installable PWA)
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + Vite app that a duka owner installs to their phone's home screen. The
+point of the PWA work is that **a sale can be recorded with no network** — by
+voice or typed — and uploads itself once signal comes back, reconciling against
+M-Pesa payments on arrival.
 
-Currently, two official plugins are available:
+## Commands
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+npm run dev      # dev server
+npm run build    # production build (also injects the SW precache manifest)
+npm run lint     # oxlint
+npm run icons    # regenerate public/icons/* from scripts/generate-icons.mjs
+```
 
-## React Compiler
+`VITE_API_BASE` overrides the backend URL (defaults to the deployed Render
+service). It is baked in at build time and is also what queued uploads use.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## How offline works
 
-## Expanding the Oxlint configuration
+| Piece | File |
+| --- | --- |
+| Install metadata, icons, shortcuts | [public/manifest.webmanifest](public/manifest.webmanifest) |
+| App-shell cache, API replay, Background Sync | [public/sw.js](public/sw.js) |
+| Precache list injected into the SW at build time | [vite.config.js](vite.config.js) |
+| IndexedDB stores (queue + snapshots) | [src/lib/idb.js](src/lib/idb.js) |
+| Upload queue, retries, idempotency keys | [src/lib/outbox.js](src/lib/outbox.js) |
+| On-device parse of typed entries | [src/lib/localParse.js](src/lib/localParse.js) |
+| SW registration, install prompt, storage persistence | [src/lib/pwa.js](src/lib/pwa.js) |
+| Connectivity + queue state for the UI | [src/hooks/useOfflineSync.js](src/hooks/useOfflineSync.js) |
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+**Capture.** With no network, a typed entry or a recorded voice note goes into
+an IndexedDB outbox (audio blob included) instead of being lost. Typed entries
+also get an on-device parse so today's totals still move; that figure is shown
+with `≈` and is replaced by the server's Gemini parse after sync. Voice notes
+show no amount at all until they upload — the transcription only exists
+server-side, so inventing a number would be a lie.
+
+**Sync.** The queue drains when the browser fires `online`, when the app is
+focused again, on a slow poll, and — where supported — through the service
+worker's Background Sync, which uploads even with the app closed. Every queued
+item carries a `clientId`; the backend treats it as an idempotency key, so a
+retry or an app/service-worker race can never write the same sale twice. The
+capture time travels with the upload as `occurredAt`, so a sale made at 4pm and
+uploaded at 8pm still lands on the right day in the weekly report.
+
+**Reconciliation.** If the customer's M-Pesa payment reaches the server before
+the offline sale does, PayHero's webhook logs a placeholder payment. When the
+real entry arrives, `backend/offline-sync.js` absorbs that placeholder — marking
+the sale paid and deleting the duplicate — so revenue is counted once.
+
+**Reads.** The ledger and the weekly till slip are snapshotted locally, so both
+screens open offline. Anything served from a saved copy says so, and the app
+never claims the weekly SMS went out when the response came from cache.
+
+## Needs network
+
+Registering a business, unlocking the Admin Ledger (bcrypt check is server-side)
+and sending an STK push all require a live connection, and the UI says so rather
+than queueing something that cannot work later.
+
+## Hosting requirements
+
+- **HTTPS** (or localhost). Service workers do not run otherwise.
+- Serve `sw.js` from the **site root** so its scope covers the whole app, and
+  with a short/no-cache `Cache-Control` so updates are picked up.
+- SPA fallback: unknown paths should return `index.html`.
+- Hashed assets in `assets/` can be cached immutably; `index.html` should not.
+- Background Sync is Chromium-only. On iOS the queue drains when the app is
+  next opened, which is why the install prompt matters there.
